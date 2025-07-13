@@ -1,0 +1,10 @@
+# Frontend
+topshot-bookstore-frontend/node_modules
+topshot-bookstore-frontend/.env
+
+# Backend
+topshot-bookstore-backend/node_modules
+topshot-bookstore-backend/.env
+
+# Logs
+*.log
