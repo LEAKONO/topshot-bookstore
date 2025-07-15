@@ -1,12 +1,12 @@
 const { validationResult } = require('express-validator');
 const Book = require('../models/Book');
+const { cloudinary } = require('../config/cloudinary');
 
 // @desc    Get all books with filtering, sorting, and pagination
 // @route   GET /api/books
 // @access  Public
 const getBooks = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -28,12 +28,9 @@ const getBooks = async (req, res) => {
       inStock
     } = req.query;
 
-    // Build query
     const query = { isActive: true };
     
-    if (category) {
-      query.category = category;
-    }
+    if (category) query.category = category;
     
     if (search) {
       query.$or = [
@@ -49,15 +46,11 @@ const getBooks = async (req, res) => {
       if (maxPrice) query.price.$lte = parseFloat(maxPrice);
     }
 
-    if (inStock === 'true') {
-      query.stock = { $gt: 0 };
-    }
+    if (inStock === 'true') query.stock = { $gt: 0 };
 
-    // Build sort object
     const sortObj = {};
     sortObj[sortBy] = order === 'desc' ? -1 : 1;
 
-    // Execute query with pagination
     const books = await Book.find(query)
       .sort(sortObj)
       .limit(limit * 1)
@@ -135,7 +128,6 @@ const getCategories = async (req, res) => {
 // @access  Public
 const searchBooks = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -193,9 +185,29 @@ const getBook = async (req, res) => {
       });
     }
 
+    // Ensure all required fields exist and are properly formatted
+    const formattedBook = {
+      ...book,
+      title: book.title || 'Untitled Book',
+      author: book.author || 'Unknown Author',
+      description: book.description || 'No description available',
+      price: book.price || 0,
+      stock: book.stock || 0,
+      category: book.category || 'Uncategorized',
+      rating: {
+        average: book.rating?.average || 0,
+        count: book.rating?.count || 0
+      },
+      imageUrl: book.image?.url || book.imageUrl || '/placeholder-book.png',
+      isAvailable: book.isAvailable !== undefined ? book.isAvailable : true,
+      stockStatus: book.stockStatus || (book.stock > 0 ? 'In Stock' : 'Out of Stock'),
+      createdAt: book.createdAt || new Date()
+    };
+
     res.json({
       success: true,
-      data: book
+      message: 'Book retrieved successfully',
+      data: formattedBook
     });
   } catch (error) {
     console.error('Get book error:', error);
@@ -212,14 +224,28 @@ const getBook = async (req, res) => {
   }
 };
 
-// @desc    Create new book
+// @desc    Create new book (with image upload to Cloudinary)
 // @route   POST /api/books
 // @access  Private/Admin
 const createBook = async (req, res) => {
   try {
-    // Check for validation errors
+    console.log('📝 Creating book with data:', req.body);
+    console.log('📁 File info:', req.file ? {
+      filename: req.file.filename,
+      path: req.file.path,
+      size: req.file.size
+    } : 'No file uploaded');
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      if (req.file && req.file.filename) {
+        console.log('🧹 Cleaning up failed upload:', req.file.filename);
+        try {
+          await cloudinary.uploader.destroy(req.file.filename);
+        } catch (cleanupError) {
+          console.error('⚠️ Cleanup error:', cleanupError.message);
+        }
+      }
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
@@ -227,7 +253,24 @@ const createBook = async (req, res) => {
       });
     }
 
-    const book = await Book.create(req.body);
+    let bookData = { ...req.body };
+    
+    // Handle image upload
+    if (req.file) {
+      console.log('✅ Cloudinary upload successful:', {
+        public_id: req.file.filename,
+        url: req.file.path,
+        size: req.file.size
+      });
+      
+      bookData.image = {
+        url: req.file.path,
+        publicId: req.file.filename
+      };
+    }
+
+    const book = await Book.create(bookData);
+    console.log('📚 Book created successfully:', book._id);
 
     res.status(201).json({
       success: true,
@@ -235,28 +278,49 @@ const createBook = async (req, res) => {
       data: book
     });
   } catch (error) {
-    console.error('Create book error:', error);
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Book with this ISBN already exists'
-      });
+    console.error('❌ Create book error:', error);
+    
+    // Clean up uploaded image if book creation fails
+    if (req.file && req.file.filename) {
+      console.log('🧹 Cleaning up failed upload due to error:', req.file.filename);
+      try {
+        await cloudinary.uploader.destroy(req.file.filename);
+      } catch (cleanupError) {
+        console.error('⚠️ Cleanup error:', cleanupError.message);
+      }
     }
+    
     res.status(500).json({
       success: false,
-      message: 'Server error while creating book'
+      message: 'Server error while creating book',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Update book
+// @desc    Update book (with optional image update)
 // @route   PUT /api/books/:id
 // @access  Private/Admin
 const updateBook = async (req, res) => {
   try {
-    // Check for validation errors
+    console.log('📝 Updating book:', req.params.id);
+    console.log('📁 File info:', req.file ? {
+      filename: req.file.filename,
+      path: req.file.path,
+      size: req.file.size
+    } : 'No file uploaded');
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      // If there's a file uploaded but validation failed, remove it from Cloudinary
+      if (req.file && req.file.filename) {
+        console.log('🧹 Cleaning up failed upload:', req.file.filename);
+        try {
+          await cloudinary.uploader.destroy(req.file.filename);
+        } catch (cleanupError) {
+          console.error('⚠️ Cleanup error:', cleanupError.message);
+        }
+      }
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
@@ -264,49 +328,86 @@ const updateBook = async (req, res) => {
       });
     }
 
-    const book = await Book.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      {
-        new: true,
-        runValidators: true
-      }
-    );
-
+    const book = await Book.findById(req.params.id);
     if (!book) {
+      // Clean up uploaded image if book not found
+      if (req.file && req.file.filename) {
+        console.log('🧹 Cleaning up upload (book not found):', req.file.filename);
+        try {
+          await cloudinary.uploader.destroy(req.file.filename);
+        } catch (cleanupError) {
+          console.error('⚠️ Cleanup error:', cleanupError.message);
+        }
+      }
       return res.status(404).json({
         success: false,
         message: 'Book not found'
       });
     }
 
+    let updateData = { ...req.body };
+
+    if (req.file) {
+      console.log('🔄 Updating book image');
+      
+      // Delete old image from Cloudinary if exists
+      if (book.image && book.image.publicId) {
+        console.log('🗑️ Deleting old image:', book.image.publicId);
+        try {
+          await cloudinary.uploader.destroy(book.image.publicId);
+        } catch (deleteError) {
+          console.error('⚠️ Old image deletion error:', deleteError.message);
+        }
+      }
+      
+      updateData.image = {
+        url: req.file.path,
+        publicId: req.file.filename
+      };
+      
+      console.log('✅ New image set:', updateData.image);
+    }
+
+    const updatedBook = await Book.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    console.log('📚 Book updated successfully:', updatedBook._id);
+
     res.json({
       success: true,
       message: 'Book updated successfully',
-      data: book
+      data: updatedBook
     });
   } catch (error) {
-    console.error('Update book error:', error);
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Book with this ISBN already exists'
-      });
+    console.error('❌ Update book error:', error);
+    
+    // Clean up uploaded image if update fails
+    if (req.file && req.file.filename) {
+      console.log('🧹 Cleaning up failed upload due to error:', req.file.filename);
+      try {
+        await cloudinary.uploader.destroy(req.file.filename);
+      } catch (cleanupError) {
+        console.error('⚠️ Cleanup error:', cleanupError.message);
+      }
     }
+    
     res.status(500).json({
       success: false,
-      message: 'Server error while updating book'
+      message: 'Server error while updating book',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Delete book
+// @desc    Delete book (soft delete)
 // @route   DELETE /api/books/:id
 // @access  Private/Admin
 const deleteBook = async (req, res) => {
   try {
     const book = await Book.findById(req.params.id);
-
     if (!book) {
       return res.status(404).json({
         success: false,
@@ -314,7 +415,12 @@ const deleteBook = async (req, res) => {
       });
     }
 
-    // Soft delete - set isActive to false
+    // Delete image from Cloudinary if exists
+    if (book.image && book.image.publicId) {
+      await cloudinary.uploader.destroy(book.image.publicId);
+    }
+
+    // Soft delete
     await Book.findByIdAndUpdate(req.params.id, { isActive: false });
 
     res.json({
@@ -335,7 +441,6 @@ const deleteBook = async (req, res) => {
 // @access  Private/Admin
 const updateStock = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({

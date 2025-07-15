@@ -27,14 +27,24 @@ const bookSchema = new mongoose.Schema({
     max: [10000, 'Price cannot exceed $10,000']
   },
   image: {
-    type: String,
-    default: '/placeholder.svg'
+    url: {
+      type: String,
+      default: '/placeholder.svg'
+    },
+    publicId: {
+      type: String,
+      default: null
+    }
   },
   category: {
     type: String,
     required: [true, 'Category is required'],
     enum: {
-      values: ['Fiction', 'Non-Fiction', 'Mystery', 'Romance', 'Sci-Fi', 'Fantasy', 'Biography', 'History', 'Self-Help', 'Business', 'Children', 'Young Adult', 'Horror', 'Thriller'],
+      values: [
+        'Fiction', 'Non-Fiction', 'Mystery', 'Romance', 'Sci-Fi', 'Fantasy',
+        'Biography', 'History', 'Self-Help', 'Business', 'Children', 
+        'Young Adult', 'Horror', 'Thriller'
+      ],
       message: 'Please select a valid category'
     },
     index: true
@@ -44,17 +54,6 @@ const bookSchema = new mongoose.Schema({
     required: [true, 'Stock quantity is required'],
     min: [0, 'Stock cannot be negative'],
     default: 0
-  },
-  isbn: {
-    type: String,
-    unique: true,
-    sparse: true,
-    match: [/^(?:ISBN(?:-1[03])?:? )?(?=[0-9X]{10}$|(?=(?:[0-9]+[- ]){3})[- 0-9X]{13}$|97[89][0-9]{10}$|(?=(?:[0-9]+[- ]){4})[- 0-9]{17}$)(?:97[89][- ]?)?[0-9]{1,5}[- ]?[0-9]+[- ]?[0-9]+[- ]?[0-9X]$/, 'Please enter a valid ISBN']
-  },
-  publisher: {
-    type: String,
-    trim: true,
-    maxlength: [100, 'Publisher name cannot exceed 100 characters']
   },
   publishedDate: Date,
   pages: {
@@ -86,7 +85,7 @@ const bookSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   }
-}, { 
+}, {
   timestamps: true,
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
@@ -99,29 +98,34 @@ bookSchema.index({ featured: 1, createdAt: -1 });
 bookSchema.index({ 'rating.average': -1 });
 
 // Virtual for availability status
-bookSchema.virtual('isAvailable').get(function() {
+bookSchema.virtual('isAvailable').get(function () {
   return this.stock > 0 && this.isActive;
 });
 
 // Virtual for stock status
-bookSchema.virtual('stockStatus').get(function() {
+bookSchema.virtual('stockStatus').get(function () {
   if (this.stock === 0) return 'Out of Stock';
   if (this.stock <= 5) return 'Low Stock';
   return 'In Stock';
 });
 
+// Virtual for image URL (for backward compatibility)
+bookSchema.virtual('imageUrl').get(function () {
+  return this.image?.url || '/placeholder.svg';
+});
+
 // Static method to get featured books
-bookSchema.statics.getFeatured = function() {
+bookSchema.statics.getFeatured = function () {
   return this.find({ featured: true, isActive: true }).sort({ createdAt: -1 });
 };
 
 // Static method to get books by category
-bookSchema.statics.getByCategory = function(category) {
+bookSchema.statics.getByCategory = function (category) {
   return this.find({ category, isActive: true }).sort({ createdAt: -1 });
 };
 
 // Method to update stock
-bookSchema.methods.updateStock = function(quantity) {
+bookSchema.methods.updateStock = function (quantity) {
   this.stock = Math.max(0, this.stock + quantity);
   return this.save();
 };

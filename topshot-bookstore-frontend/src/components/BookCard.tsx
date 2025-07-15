@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ShoppingCart, Heart, Star, Eye } from 'lucide-react';
@@ -29,14 +28,41 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
     }).format(price);
   };
 
+  /**
+   * Gets the image URL from the book object, handling different API response structures
+   */
+  const getImageUrl = (): string => {
+    // Handle case where image is an object with url property
+    if (book.image && typeof book.image === 'object' && 'url' in book.image) {
+      return book.image.url;
+    }
+    // Handle case where imageUrl exists as direct property
+    if (book.imageUrl) return book.imageUrl;
+    // Handle case where image is a direct string URL
+    if (typeof book.image === 'string') return book.image;
+    // Fallback to placeholder
+    return '/placeholder.svg';
+  };
+
+  /**
+   * Handles image loading errors by falling back to placeholder
+   */
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const target = e.target as HTMLImageElement;
+    target.src = '/placeholder.svg';
+    target.classList.add('opacity-50');
+  };
+
   if (variant === 'compact') {
     return (
       <Card className="group hover:shadow-lg transition-all duration-300 overflow-hidden">
         <Link to={`/books/${book._id}`} className="flex gap-4 p-4">
           <img
-            src={book.image || '/placeholder.svg'}
-            alt={book.title}
-            className="w-16 h-20 object-cover rounded-md flex-shrink-0"
+            src={getImageUrl()}
+            alt={`Cover of ${book.title}`}
+            loading="lazy"
+            onError={handleImageError}
+            className="w-16 h-20 object-cover rounded-md flex-shrink-0 bg-gray-100 dark:bg-gray-700"
           />
           <div className="flex-1 min-w-0">
             <h3 className="font-medium text-gray-900 dark:text-white line-clamp-2 text-sm group-hover:text-amber-600 transition-colors">
@@ -54,6 +80,7 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
                 onClick={handleAddToCart}
                 disabled={book.stock === 0}
                 className="h-7 px-2 text-xs bg-amber-600 hover:bg-amber-700"
+                aria-label={`Add ${book.title} to cart`}
               >
                 <ShoppingCart className="h-3 w-3" />
               </Button>
@@ -66,12 +93,14 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
 
   return (
     <Card className="group hover:shadow-2xl transition-all duration-300 overflow-hidden border-0 bg-white dark:bg-gray-800">
-      <Link to={`/books/${book._id}`}>
+      <Link to={`/books/${book._id}`} aria-label={`View details of ${book.title}`}>
         <div className="relative overflow-hidden">
           <img
-            src={book.image || '/placeholder.svg'}
-            alt={book.title}
-            className="w-full h-64 object-cover group-hover:scale-105 transition-transform duration-300"
+            src={getImageUrl()}
+            alt={`Cover of ${book.title}`}
+            loading="lazy"
+            onError={handleImageError}
+            className="w-full h-64 object-cover group-hover:scale-105 transition-transform duration-300 bg-gray-100 dark:bg-gray-700"
           />
           
           {/* Badges */}
@@ -89,7 +118,12 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
 
           {/* Hover Actions */}
           <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-            <Button size="sm" variant="secondary" className="bg-white/90 hover:bg-white shadow-sm">
+            <Button 
+              size="sm" 
+              variant="secondary" 
+              className="bg-white/90 hover:bg-white shadow-sm"
+              aria-label="Add to wishlist"
+            >
               <Heart className="h-4 w-4 text-gray-600 hover:text-red-500 transition-colors" />
             </Button>
           </div>
@@ -100,6 +134,7 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
               size="sm" 
               variant="secondary" 
               className="opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-2 group-hover:translate-y-0 bg-white/90 hover:bg-white"
+              aria-label="Quick view"
             >
               <Eye className="h-4 w-4 mr-2" />
               Quick View
@@ -129,7 +164,7 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
               <Badge variant="outline" className="text-xs font-medium">
                 {book.category}
               </Badge>
-              {book.rating.count > 0 && (
+              {book.rating?.count > 0 && (
                 <div className="flex items-center gap-1">
                   <div className="flex">
                     {Array.from({ length: 5 }).map((_, i) => (
@@ -180,6 +215,7 @@ const BookCard: React.FC<BookCardProps> = ({ book, variant = 'default' }) => {
             onClick={handleAddToCart}
             disabled={book.stock === 0}
             className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white shadow-md hover:shadow-lg transition-all"
+            aria-label={`Add ${book.title} to cart`}
           >
             <ShoppingCart className="h-4 w-4 mr-2" />
             Add to Cart

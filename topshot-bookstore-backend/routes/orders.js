@@ -5,7 +5,6 @@ const { auth, admin } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation rules
 const orderValidation = [
   body('items')
     .isArray({ min: 1 })

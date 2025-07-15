@@ -1,7 +1,8 @@
 const express = require('express');
-const { body, query, validationResult } = require('express-validator');
+const { body, query } = require('express-validator');
 const bookController = require('../controllers/bookController');
 const { auth, admin, optionalAuth } = require('../middleware/auth');
+const { upload, handleUploadError } = require('../config/cloudinary');
 
 const router = express.Router();
 
@@ -39,7 +40,33 @@ const bookValidation = [
   body('isbn')
     .optional()
     .matches(/^(?:ISBN(?:-1[03])?:? )?(?=[0-9X]{10}$|(?=(?:[0-9]+[- ]){3})[- 0-9X]{13}$|97[89][0-9]{10}$|(?=(?:[0-9]+[- ]){4})[- 0-9]{17}$)(?:97[89][- ]?)?[0-9]{1,5}[- ]?[0-9]+[- ]?[0-9]+[- ]?[0-9X]$/)
-    .withMessage('Please enter a valid ISBN')
+    .withMessage('Please enter a valid ISBN'),
+  body('tags')
+    .optional()
+    .isArray()
+    .withMessage('Tags must be an array'),
+  body('publisher')
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('Publisher name cannot exceed 100 characters'),
+  body('publishedDate')
+    .optional()
+    .isISO8601()
+    .withMessage('Please enter a valid date'),
+  body('pages')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Pages must be a positive integer'),
+  body('language')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Language cannot exceed 50 characters'),
+  body('format')
+    .optional()
+    .isIn(['Hardcover', 'Paperback', 'E-book', 'Audio'])
+    .withMessage('Please select a valid format')
 ];
 
 const queryValidation = [
@@ -58,7 +85,24 @@ const queryValidation = [
   query('order')
     .optional()
     .isIn(['asc', 'desc'])
-    .withMessage('Order must be asc or desc')
+    .withMessage('Order must be asc or desc'),
+  query('minPrice')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Minimum price must be a positive number'),
+  query('maxPrice')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Maximum price must be a positive number'),
+  query('category')
+    .optional()
+    .isIn(['Fiction', 'Non-Fiction', 'Mystery', 'Romance', 'Sci-Fi', 'Fantasy', 'Biography', 'History', 'Self-Help', 'Business', 'Children', 'Young Adult', 'Horror', 'Thriller'])
+    .withMessage('Please select a valid category'),
+  query('search')
+    .optional()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Search query must be between 1 and 100 characters')
 ];
 
 // @route   GET /api/books
@@ -84,7 +128,11 @@ router.get('/search', [
     .notEmpty()
     .withMessage('Search query is required')
     .isLength({ min: 1, max: 100 })
-    .withMessage('Search query must be between 1 and 100 characters')
+    .withMessage('Search query must be between 1 and 100 characters'),
+  query('limit')
+    .optional()
+    .isInt({ min: 1, max: 50 })
+    .withMessage('Limit must be between 1 and 50')
 ], bookController.searchBooks);
 
 // @route   GET /api/books/:id
@@ -95,12 +143,26 @@ router.get('/:id', optionalAuth, bookController.getBook);
 // @route   POST /api/books
 // @desc    Create a new book
 // @access  Private/Admin
-router.post('/', auth, admin, bookValidation, bookController.createBook);
+router.post('/', 
+  auth, 
+  admin, 
+  upload.single('coverImage'), 
+  handleUploadError,
+  bookValidation, 
+  bookController.createBook
+);
 
 // @route   PUT /api/books/:id
 // @desc    Update a book
 // @access  Private/Admin
-router.put('/:id', auth, admin, bookValidation, bookController.updateBook);
+router.put('/:id', 
+  auth, 
+  admin, 
+  upload.single('coverImage'), 
+  handleUploadError,
+  bookValidation, 
+  bookController.updateBook
+);
 
 // @route   DELETE /api/books/:id
 // @desc    Delete a book
