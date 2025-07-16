@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, BookOpen } from 'lucide-react';
@@ -14,16 +13,16 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  
-  const from = location.state?.from?.pathname || '/';
+
+  const from = location.state?.from?.pathname || '/books';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!email || !password) {
       toast.error('Please fill in all fields');
       return;
@@ -31,10 +30,15 @@ const Login: React.FC = () => {
 
     try {
       setLoading(true);
-      await login(email, password);
-      navigate(from, { replace: true });
+      const user = await login(email, password); // 🟢 Make sure login returns the user
+
+      if (user?.role === 'admin') {
+        navigate('/admin', { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
     } catch (error) {
-      // Error is handled in the AuthContext
+      // Error is handled in AuthContext
     } finally {
       setLoading(false);
     }
@@ -51,7 +55,7 @@ const Login: React.FC = () => {
           <h2 className="text-3xl font-bold text-gray-900">Welcome back</h2>
           <p className="mt-2 text-gray-600">Sign in to your account</p>
         </div>
-        
+
         <Card>
           <CardHeader>
             <CardTitle>Sign In</CardTitle>

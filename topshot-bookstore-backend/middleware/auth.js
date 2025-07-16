@@ -1,100 +1,117 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-// Protect routes - authentication required
+/**
+ * Main authentication middleware
+ * Verifies JWT token from either Authorization header or cookie
+ */
 const auth = async (req, res, next) => {
   try {
-    let token;
-
-    // Check for token in header
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    }
+    // 1. Get token from header or cookie
+    let token = req.header('Authorization')?.replace('Bearer ', '') || 
+               req.cookies?.token;
 
     if (!token) {
       return res.status(401).json({ 
         success: false,
-        message: 'Access denied. No token provided.' 
+        message: 'Authentication required' 
       });
     }
 
-    try {
-      // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
-      // Get user from token
-      const user = await User.findById(decoded.id).select('-password');
-      
-      if (!user) {
-        return res.status(401).json({ 
-          success: false,
-          message: 'Token is not valid. User not found.' 
-        });
-      }
+    // 2. Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // 3. Find active user
+    const user = await User.findOne({ 
+      _id: decoded.id,
+      isActive: true
+    }).select('-password -refreshToken');
 
-      if (!user.isActive) {
-        return res.status(401).json({ 
-          success: false,
-          message: 'User account is deactivated.' 
-        });
-      }
-
-      req.user = user;
-      next();
-    } catch (error) {
+    if (!user) {
       return res.status(401).json({ 
         success: false,
-        message: 'Token is not valid.' 
+        message: 'Invalid or expired token' 
       });
     }
+
+    // 4. Attach user to request
+    req.user = user;
+    req.token = token;
+    next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
+    console.error('Authentication error:', error.message);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Session expired, please login again' 
+      });
+    }
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid authentication token' 
+      });
+    }
+
     res.status(500).json({ 
       success: false,
-      message: 'Server Error' 
+      message: 'Authentication failed' 
     });
   }
 };
 
-// Admin only access
+/**
+ * Admin authorization middleware
+ * Must be used after auth middleware
+ */
 const admin = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
-    next();
-  } else {
-    res.status(403).json({ 
-      success: false,
-      message: 'Access denied. Admin privileges required.' 
-    });
+  if (req.user?.role === 'admin') {
+    return next();
   }
+  
+  res.status(403).json({ 
+    success: false,
+    message: 'Admin privileges required' 
+  });
 };
 
-// Optional auth - user data if token provided, but route accessible without token
+/**
+ * Optional authentication middleware
+ * Populates req.user if valid token exists, but doesn't block access
+ */
 const optionalAuth = async (req, res, next) => {
   try {
-    let token;
-
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    }
+    let token = req.header('Authorization')?.replace('Bearer ', '') || 
+               req.cookies?.token;
 
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.id).select('-password');
-        if (user && user.isActive) {
+        const user = await User.findOne({
+          _id: decoded.id,
+          isActive: true
+        }).select('-password -refreshToken');
+        
+        if (user) {
           req.user = user;
+          req.token = token;
         }
       } catch (error) {
-        // Invalid token, but that's okay for optional auth
-        console.log('Invalid token in optional auth:', error.message);
+        console.log('Optional auth token validation failed:', error.message);
       }
     }
-
+    
     next();
   } catch (error) {
-    console.error('Optional auth middleware error:', error);
+    console.error('Optional auth error:', error);
     next();
   }
 };
 
-module.exports = { auth, admin, optionalAuth };
+module.exports = { 
+  auth,    // Strict authentication (blocks if invalid)
+  admin,   // Admin role check (must be used after auth)
+  optionalAuth // Non-blocking authentication
+};

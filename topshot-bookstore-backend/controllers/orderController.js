@@ -1,42 +1,67 @@
 const { validationResult } = require('express-validator');
 const Order = require('../models/Order');
 const Book = require('../models/Book');
+const User = require('../models/User');
+
+// 🔢 Generate unique order number
+const generateOrderNumber = () => {
+  return `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+};
 
 // @desc    Create new order
 // @route   POST /api/orders
 // @access  Private
 const createOrder = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
-        errors: errors.array()
+        errors: errors.array(),
       });
     }
 
-    const { items, customerInfo, paymentMethod, notes } = req.body;
+    const { items, shippingAddress, paymentMethod, notes } = req.body;
+    const user = await User.findById(req.user._id);
 
-    // Validate and calculate order totals
+    // ======== NEW ADDRESS VALIDATION ========
+    // Use either provided shippingAddress or user's saved address
+    const address = shippingAddress || user.address;
+    
+    // Validate all required address fields
+    if (!address || !address.street || !address.city || !address.state || !address.zipCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete shipping address is required',
+        requiredFields: {
+          street: !address?.street,
+          city: !address?.city,
+          state: !address?.state,
+          zipCode: !address?.zipCode
+        },
+        hint: 'Either provide complete shippingAddress in request or save complete address in user profile'
+      });
+    }
+    // ======== END OF NEW VALIDATION ========
+
     let orderItems = [];
     let subtotal = 0;
 
+    // Validate items and calculate totals (keep existing code)
     for (const item of items) {
       const book = await Book.findById(item.book);
-      
       if (!book || !book.isActive) {
         return res.status(400).json({
           success: false,
-          message: `Book not found: ${item.book}`
+          message: `Book not available: ${item.book}`,
         });
       }
 
       if (book.stock < item.quantity) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient stock for "${book.title}". Available: ${book.stock}, Requested: ${item.quantity}`
+          message: `Insufficient stock for "${book.title}". Available: ${book.stock}, Requested: ${item.quantity}`,
         });
       }
 
@@ -45,103 +70,107 @@ const createOrder = async (req, res) => {
 
       orderItems.push({
         book: book._id,
+        title: book.title,
         quantity: item.quantity,
-        price: book.price
+        price: book.price,
+        coverImage: book.coverImage
       });
     }
 
-    // Calculate tax and shipping
-    const tax = subtotal * 0.08; // 8% tax
-    const shipping = subtotal > 50 ? 0 : 9.99; // Free shipping over $50
+    // Calculate totals (keep existing code)
+    const taxRate = 0.08;
+    const tax = subtotal * taxRate;
+    const shipping = subtotal > 50 ? 0 : 9.99;
     const total = subtotal + tax + shipping;
 
-    // Create order
+    // Create order (modified to use validated address)
     const order = new Order({
       user: req.user._id,
+      orderNumber: generateOrderNumber(),
       items: orderItems,
       subtotal,
       tax,
       shipping,
       total,
-      customerInfo,
+      shippingAddress: address,  // Use validated address
       paymentMethod,
-      notes
+      notes,
+      customerInfo: {
+        name: user.name,
+        email: user.email,
+        phone: user.phone || '', // Handle optional phone
+        address: {              // Structured to match schema
+          street: address.street,
+          city: address.city,
+          state: address.state,
+          zipCode: address.zipCode,
+          country: address.country || 'Kenya' // Default
+        }
+      }
     });
 
+    // Save order and update stock (keep existing code)
     await order.save();
+    
+    const bulkOps = items.map(item => ({
+      updateOne: {
+        filter: { _id: item.book },
+        update: { $inc: { stock: -item.quantity } }
+      }
+    }));
+    await Book.bulkWrite(bulkOps);
 
-    // Update book stock
-    for (const item of items) {
-      await Book.findByIdAndUpdate(
-        item.book,
-        { $inc: { stock: -item.quantity } }
-      );
-    }
-
-    // Populate book details for response
-    await order.populate('items.book user', 'title author price name email');
+    const populatedOrder = await Order.findById(order._id)
+      .populate('user', 'name email')
+      .populate('items.book', 'title author');
 
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
-      data: order
+      data: populatedOrder,
     });
   } catch (error) {
     console.error('Create order error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while creating order'
+      message: 'Server error while creating order',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
-
 // @desc    Get user's orders
 // @route   GET /api/orders
 // @access  Private
 const getUserOrders = async (req, res) => {
   try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array()
-      });
-    }
-
-    const { page = 1, limit = 10, status } = req.query;
-    
+    const { status, limit = 10, page = 1 } = req.query;
     const query = { user: req.user._id };
-    if (status) {
-      query.status = status;
-    }
+    
+    if (status) query.status = status;
 
     const orders = await Order.find(query)
-      .populate('items.book', 'title author price image')
+      .populate('items.book', 'title author price coverImage')
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit));
 
-    const total = await Order.countDocuments(query);
+    const count = await Order.countDocuments(query);
 
-    res.json({
+    res.status(200).json({
       success: true,
-      data: {
-        orders,
-        pagination: {
-          current: parseInt(page),
-          pages: Math.ceil(total / limit),
-          total,
-          limit: parseInt(limit)
-        }
+      data: orders,
+      pagination: {
+        total: count,
+        pages: Math.ceil(count / limit),
+        currentPage: page
       }
     });
   } catch (error) {
     console.error('Get user orders error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching orders'
+      message: 'Server error while fetching user orders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -154,7 +183,9 @@ const getOrder = async (req, res) => {
     const order = await Order.findOne({
       _id: req.params.id,
       user: req.user._id
-    }).populate('items.book', 'title author price image');
+    })
+    .populate('items.book', 'title author price coverImage')
+    .populate('user', 'name email');
 
     if (!order) {
       return res.status(404).json({
@@ -163,21 +194,16 @@ const getOrder = async (req, res) => {
       });
     }
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: order
     });
   } catch (error) {
     console.error('Get order error:', error);
-    if (error.name === 'CastError') {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching order'
+      message: 'Server error while fetching order',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -187,42 +213,33 @@ const getOrder = async (req, res) => {
 // @access  Private
 const cancelOrder = async (req, res) => {
   try {
-    const { reason } = req.body;
-
     const order = await Order.findOne({
       _id: req.params.id,
-      user: req.user._id
-    }).populate('items.book');
+      user: req.user._id,
+      status: { $in: ['pending', 'processing'] }
+    });
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    if (!['pending', 'confirmed'].includes(order.status)) {
       return res.status(400).json({
         success: false,
-        message: 'Order cannot be cancelled at this stage'
+        message: 'Order cannot be cancelled or not found'
       });
     }
 
     // Restore book stock
-    for (const item of order.items) {
-      await Book.findByIdAndUpdate(
-        item.book._id,
-        { $inc: { stock: item.quantity } }
-      );
-    }
+    const bulkOps = order.items.map(item => ({
+      updateOne: {
+        filter: { _id: item.book },
+        update: { $inc: { stock: item.quantity } }
+      }
+    }));
+    await Book.bulkWrite(bulkOps);
 
-    // Update order
     order.status = 'cancelled';
     order.cancelledAt = new Date();
-    order.cancellationReason = reason;
     await order.save();
 
-    res.json({
+    res.status(200).json({
       success: true,
       message: 'Order cancelled successfully',
       data: order
@@ -231,83 +248,84 @@ const cancelOrder = async (req, res) => {
     console.error('Cancel order error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while cancelling order'
+      message: 'Server error while cancelling order',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// Admin Controllers
-
-// @desc    Get all orders (admin)
-// @route   GET /api/orders/admin/all
+// @desc    Get all orders (Admin)
+// @route   GET /api/admin/orders
 // @access  Private/Admin
 const getAllOrders = async (req, res) => {
   try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array()
-      });
-    }
-
-    const { page = 1, limit = 20, status } = req.query;
+    const { status, userId, startDate, endDate, page = 1, limit = 20 } = req.query;
     
     const query = {};
-    if (status) {
-      query.status = status;
+    if (status) query.status = status;
+    if (userId) query.user = userId;
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
     }
 
     const orders = await Order.find(query)
-      .populate('user', 'name email')
-      .populate('items.book', 'title author price')
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .populate('user', 'name email')
+      .populate('items.book', 'title author price coverImage')
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit));
 
-    const total = await Order.countDocuments(query);
+    const count = await Order.countDocuments(query);
 
-    res.json({
+    res.status(200).json({
       success: true,
-      data: {
-        orders,
-        pagination: {
-          current: parseInt(page),
-          pages: Math.ceil(total / limit),
-          total,
-          limit: parseInt(limit)
-        }
+      data: orders,
+      pagination: {
+        total: count,
+        pages: Math.ceil(count / limit),
+        currentPage: page
       }
     });
   } catch (error) {
     console.error('Get all orders error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching orders'
+      message: 'Server error while fetching orders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Update order status (admin)
-// @route   PUT /api/orders/admin/:id/status
+// @desc    Update order status (Admin)
+// @route   PUT /api/admin/orders/:id/status
 // @access  Private/Admin
 const updateOrderStatus = async (req, res) => {
   try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
+    const { status } = req.body;
+    const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Validation failed',
-        errors: errors.array()
+        message: 'Invalid status value'
       });
     }
 
-    const { status } = req.body;
+    const updateData = { status };
+    
+    // Add timestamps for specific status changes
+    if (status === 'shipped') updateData.shippedAt = new Date();
+    if (status === 'delivered') updateData.deliveredAt = new Date();
 
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true }
+    )
+    .populate('user', 'name email')
+    .populate('items.book', 'title author price');
 
     if (!order) {
       return res.status(404).json({
@@ -316,90 +334,88 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
-    // Update status and related fields
-    order.status = status;
-    
-    if (status === 'delivered') {
-      order.deliveredAt = new Date();
-    }
-
-    await order.save();
-    
-    await order.populate('items.book user', 'title author price name email');
-
-    res.json({
+    res.status(200).json({
       success: true,
-      message: 'Order status updated successfully',
+      message: 'Order status updated',
       data: order
     });
   } catch (error) {
     console.error('Update order status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while updating order status'
+      message: 'Server error while updating order status',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Get order statistics (admin)
-// @route   GET /api/orders/admin/stats
+// @desc    Get order statistics (Admin)
+// @route   GET /api/admin/orders/stats
 // @access  Private/Admin
 const getOrderStats = async (req, res) => {
   try {
+    const { period = 'month' } = req.query;
+    let groupBy = { $month: '$createdAt' };
+    
+    if (period === 'day') groupBy = { $dayOfMonth: '$createdAt' };
+    if (period === 'year') groupBy = { $year: '$createdAt' };
+
     const stats = await Order.aggregate([
       {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$total' }
+        $match: {
+          createdAt: { $gte: new Date(new Date().setFullYear(new Date().getFullYear() - 1)) }
         }
-      }
+      },
+      {
+        $group: {
+          _id: groupBy,
+          count: { $sum: 1 },
+          totalRevenue: { $sum: '$total' },
+          avgOrderValue: { $avg: '$total' }
+        }
+      },
+      { $sort: { _id: 1 } }
     ]);
 
-    const totalOrders = await Order.countDocuments();
-    const totalRevenue = await Order.aggregate([
-      { $match: { status: { $ne: 'cancelled' } } },
-      { $group: { _id: null, total: { $sum: '$total' } } }
-    ]);
-
-    const recentOrders = await Order.find()
-      .populate('user', 'name email')
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    res.json({
+    res.status(200).json({
       success: true,
-      data: {
-        statusStats: stats,
-        totalOrders,
-        totalRevenue: totalRevenue[0]?.total || 0,
-        recentOrders
-      }
+      data: stats
     });
   } catch (error) {
     console.error('Get order stats error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching order statistics'
+      message: 'Server error while fetching order stats',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Update tracking information (admin)
-// @route   PUT /api/orders/admin/:id/tracking
+// @desc    Update order tracking (Admin)
+// @route   PUT /api/admin/orders/:id/tracking
 // @access  Private/Admin
 const updateTracking = async (req, res) => {
   try {
-    const { trackingNumber, estimatedDelivery } = req.body;
+    const { trackingNumber, carrier } = req.body;
+
+    if (!trackingNumber || !carrier) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tracking number and carrier are required'
+      });
+    }
 
     const order = await Order.findByIdAndUpdate(
       req.params.id,
-      {
+      { 
         trackingNumber,
-        ...(estimatedDelivery && { estimatedDelivery: new Date(estimatedDelivery) })
+        carrier,
+        status: 'shipped',
+        shippedAt: new Date() 
       },
-      { new: true, runValidators: true }
-    );
+      { new: true }
+    )
+    .populate('user', 'name email');
 
     if (!order) {
       return res.status(404).json({
@@ -408,19 +424,17 @@ const updateTracking = async (req, res) => {
       });
     }
 
-    res.json({
+    res.status(200).json({
       success: true,
-      message: 'Tracking information updated successfully',
-      data: {
-        trackingNumber: order.trackingNumber,
-        estimatedDelivery: order.estimatedDelivery
-      }
+      message: 'Tracking information updated',
+      data: order
     });
   } catch (error) {
     console.error('Update tracking error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while updating tracking information'
+      message: 'Server error while updating tracking',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

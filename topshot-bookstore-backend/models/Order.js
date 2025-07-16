@@ -86,14 +86,14 @@ const orderSchema = new mongoose.Schema({
       },
       country: {
         type: String,
-        default: 'United States'
+        default: 'Kenya'
       }
     }
   },
   paymentMethod: {
     type: String,
     required: [true, 'Payment method is required'],
-    enum: ['Credit Card', 'Debit Card', 'PayPal', 'Cash on Delivery']
+    enum: ['Credit Card', 'Debit Card', 'PayPal', 'Cash on Delivery', 'Pesapal']
   },
   paymentStatus: {
     type: String,
@@ -110,60 +110,26 @@ const orderSchema = new mongoose.Schema({
   estimatedDelivery: Date,
   deliveredAt: Date,
   cancelledAt: Date,
-  cancellationReason: String
-}, { 
+  cancellationReason: String,
+
+  // 🟢 Pesapal fields
+  paymentReference: {
+    type: String,
+    default: null
+  },
+  transactionTrackingId: {
+    type: String,
+    default: null
+  }
+}, {
   timestamps: true,
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
 
-// Indexes
-orderSchema.index({ user: 1, createdAt: -1 });
-orderSchema.index({ orderNumber: 1 });
-orderSchema.index({ status: 1 });
-orderSchema.index({ createdAt: -1 });
-
-// Pre-save middleware to generate order number
-orderSchema.pre('save', async function(next) {
-  if (!this.orderNumber) {
-    const timestamp = Date.now().toString();
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    this.orderNumber = `ORD-${timestamp}-${random}`;
-  }
-  next();
-});
-
-// Virtual for formatted order number
-orderSchema.virtual('formattedOrderNumber').get(function() {
-  return this.orderNumber || 'N/A';
-});
-
 // Virtual for total items count
-orderSchema.virtual('itemCount').get(function() {
+orderSchema.virtual('itemCount').get(function () {
   return this.items.reduce((total, item) => total + item.quantity, 0);
 });
-
-// Method to calculate totals
-orderSchema.methods.calculateTotals = function() {
-  this.subtotal = this.items.reduce((total, item) => total + (item.price * item.quantity), 0);
-  this.tax = this.subtotal * 0.08; // 8% tax rate
-  this.shipping = this.subtotal > 50 ? 0 : 9.99; // Free shipping over $50
-  this.total = this.subtotal + this.tax + this.shipping;
-  return this;
-};
-
-// Static method to get order statistics
-orderSchema.statics.getOrderStats = async function() {
-  const stats = await this.aggregate([
-    {
-      $group: {
-        _id: '$status',
-        count: { $sum: 1 },
-        totalAmount: { $sum: '$total' }
-      }
-    }
-  ]);
-  return stats;
-};
 
 module.exports = mongoose.model('Order', orderSchema);

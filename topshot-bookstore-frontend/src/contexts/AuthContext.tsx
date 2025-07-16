@@ -1,5 +1,9 @@
-
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  useEffect,
+} from 'react';
 import { api } from '@/utils/api';
 import type { User } from '@/types';
 
@@ -72,6 +76,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [state, dispatch] = useReducer(authReducer, initialState);
 
   useEffect(() => {
+    // 🔐 Auto logout on 401 from any API call
+    api.onUnauthorized = () => {
+      dispatch({ type: 'LOGOUT' });
+      api.setToken(null);
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+    };
+
     checkAuth();
   }, []);
 
@@ -123,6 +135,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('token');
     api.setToken(null);
     dispatch({ type: 'LOGOUT' });
+    window.location.href = '/login';
   };
 
   const clearError = () => {

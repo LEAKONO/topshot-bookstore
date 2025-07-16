@@ -15,7 +15,6 @@ const generateToken = (id) => {
 // @access  Public
 const register = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -25,9 +24,15 @@ const register = async (req, res) => {
       });
     }
 
-    const { name, email, password, phone } = req.body;
+    const { name, email, password } = req.body;
 
-    // Check if user already exists
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -36,18 +41,14 @@ const register = async (req, res) => {
       });
     }
 
-    // Create user
     const user = await User.create({
-      name,
       email,
       password,
-      phone
+      ...(name && { name })
     });
 
-    // Update last login
     await user.updateLastLogin();
 
-    // Generate token
     const token = generateToken(user._id);
 
     res.status(201).json({
@@ -58,8 +59,7 @@ const register = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role,
-        phone: user.phone
+        role: user.role
       }
     });
   } catch (error) {
@@ -76,7 +76,6 @@ const register = async (req, res) => {
 // @access  Public
 const login = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -88,7 +87,6 @@ const login = async (req, res) => {
 
     const { email, password } = req.body;
 
-    // Check for user and include password
     const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({
@@ -97,7 +95,6 @@ const login = async (req, res) => {
       });
     }
 
-    // Check if user is active
     if (!user.isActive) {
       return res.status(401).json({
         success: false,
@@ -105,7 +102,6 @@ const login = async (req, res) => {
       });
     }
 
-    // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({
@@ -114,10 +110,8 @@ const login = async (req, res) => {
       });
     }
 
-    // Update last login
     await user.updateLastLogin();
 
-    // Generate token
     const token = generateToken(user._id);
 
     res.json({
@@ -148,7 +142,7 @@ const login = async (req, res) => {
 const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
-    
+
     res.json({
       success: true,
       user: {
@@ -176,7 +170,6 @@ const getMe = async (req, res) => {
 // @access  Private
 const updateProfile = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -187,7 +180,7 @@ const updateProfile = async (req, res) => {
     }
 
     const { name, phone, address } = req.body;
-    
+
     const user = await User.findByIdAndUpdate(
       req.user.id,
       {
@@ -224,7 +217,6 @@ const updateProfile = async (req, res) => {
 // @access  Private
 const changePassword = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -236,10 +228,8 @@ const changePassword = async (req, res) => {
 
     const { currentPassword, newPassword } = req.body;
 
-    // Get user with password
     const user = await User.findById(req.user.id).select('+password');
 
-    // Check current password
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       return res.status(400).json({
@@ -248,7 +238,6 @@ const changePassword = async (req, res) => {
       });
     }
 
-    // Update password
     user.password = newPassword;
     await user.save();
 

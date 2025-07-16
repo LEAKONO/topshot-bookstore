@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: [true, 'Name is required'],
+    required: false, // Made optional
     trim: true,
     maxlength: [100, 'Name cannot exceed 100 characters']
   },
@@ -43,20 +43,48 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
-  lastLogin: Date,
+  lastLogin: {
+    type: Date
+  },
+  refreshToken: {
+    type: String,
+    select: false
+  },
   resetPasswordToken: String,
   resetPasswordExpire: Date
 }, { 
   timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
+  toJSON: { 
+    virtuals: true,
+    transform: function(doc, ret) {
+      // Remove sensitive fields when converting to JSON
+      delete ret.password;
+      delete ret.refreshToken;
+      delete ret.resetPasswordToken;
+      delete ret.resetPasswordExpire;
+      return ret;
+    }
+  },
+  toObject: { 
+    virtuals: true,
+    transform: function(doc, ret) {
+      // Remove sensitive fields when converting to object
+      delete ret.password;
+      delete ret.refreshToken;
+      delete ret.resetPasswordToken;
+      delete ret.resetPasswordExpire;
+      return ret;
+    }
+  }
 });
 
-// Index for performance
-userSchema.index({ email: 1 });
+// Indexes for better query performance
+userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ role: 1 });
+userSchema.index({ isActive: 1 });
+userSchema.index({ createdAt: 1 });
 
-// Hash password before saving
+// Middleware to hash password before saving
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
@@ -69,15 +97,39 @@ userSchema.pre('save', async function(next) {
   }
 });
 
-// Compare password method
-userSchema.methods.comparePassword = async function(enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+// Password comparison method
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Update last login
-userSchema.methods.updateLastLogin = function() {
+// Update last login timestamp
+userSchema.methods.updateLastLogin = async function() {
   this.lastLogin = new Date();
   return this.save({ validateBeforeSave: false });
+};
+
+// Generate password reset token
+userSchema.methods.getResetPasswordToken = function() {
+  const resetToken = crypto.randomBytes(20).toString('hex');
+  
+  this.resetPasswordToken = crypto
+    .createHash('sha256')
+    .update(resetToken)
+    .digest('hex');
+    
+  this.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+  
+  return resetToken;
+};
+
+// Virtual for full address
+userSchema.virtual('fullAddress').get(function() {
+  return `${this.address.street}, ${this.address.city}, ${this.address.state} ${this.address.zipCode}, ${this.address.country}`;
+});
+
+// Query helper for active users
+userSchema.query.active = function() {
+  return this.where({ isActive: true });
 };
 
 module.exports = mongoose.model('User', userSchema);

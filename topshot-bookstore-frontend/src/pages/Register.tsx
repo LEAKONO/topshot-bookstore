@@ -1,6 +1,5 @@
-
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, BookOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -19,20 +18,24 @@ const Register: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   const { register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Get where the user was trying to go before being redirected to register
+  const from = location.state?.from?.pathname || '/';
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData(prev => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.name || !formData.email || !formData.password || !formData.confirmPassword) {
       toast.error('Please fill in all fields');
       return;
@@ -53,11 +56,11 @@ const Register: React.FC = () => {
       await register({
         name: formData.name,
         email: formData.email,
-        password: formData.password
+        password: formData.password,
       });
-      navigate('/');
+      navigate(from, { replace: true });
     } catch (error) {
-      // Error is handled in the AuthContext
+      // Handled in AuthContext
     } finally {
       setLoading(false);
     }
@@ -74,7 +77,7 @@ const Register: React.FC = () => {
           <h2 className="text-3xl font-bold text-gray-900">Create your account</h2>
           <p className="mt-2 text-gray-600">Join our community of book lovers</p>
         </div>
-        
+
         <Card>
           <CardHeader>
             <CardTitle>Sign Up</CardTitle>

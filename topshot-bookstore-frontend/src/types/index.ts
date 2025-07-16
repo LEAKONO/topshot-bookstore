@@ -1,4 +1,6 @@
-
+// --------------------
+// 🧾 User
+// --------------------
 export interface User {
   _id: string;
   name: string;
@@ -16,6 +18,9 @@ export interface User {
   createdAt: string;
 }
 
+// --------------------
+// 📚 Book
+// --------------------
 export interface Book {
   _id: string;
   title: string;
@@ -41,6 +46,9 @@ export interface Book {
   updatedAt: string;
 }
 
+// --------------------
+// 🛒 Cart & Order Items
+// --------------------
 export interface CartItem {
   book: Book;
   quantity: number;
@@ -52,6 +60,9 @@ export interface OrderItem {
   price: number;
 }
 
+// --------------------
+// 📦 Order
+// --------------------
 export interface Order {
   _id: string;
   orderNumber: string;
@@ -75,7 +86,13 @@ export interface Order {
   };
   paymentMethod: string;
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  status:
+    | 'pending'
+    | 'confirmed'
+    | 'processing'
+    | 'shipped'
+    | 'delivered'
+    | 'cancelled';
   notes?: string;
   trackingNumber?: string;
   estimatedDelivery?: string;
@@ -86,6 +103,9 @@ export interface Order {
   updatedAt: string;
 }
 
+// --------------------
+// 🔁 API Responses
+// --------------------
 export interface ApiResponse<T> {
   success: boolean;
   message?: string;
@@ -128,4 +148,19 @@ export interface BooksResponse {
 export interface FeaturedBooksResponse {
   success: boolean;
   data: Book[];
+}
+
+// --------------------
+// 💳 Payments
+// --------------------
+export interface PaymentInitiationResponse {
+  redirectUrl: string;
+  paymentReference: string;
+}
+
+export interface PaymentStatusResponse {
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  amount: number;
+  currency: string;
+  timestamp: string;
 }
